@@ -54,11 +54,16 @@ public class DataArchive : IDisposable
             {
                 var line = reader.ReadLine().Trim();
                 RegisterFileIfValid(line);
-
-                // remove fhd for 4k assets
-                //RegisterFileIfValid(line.Replace("/fhd", ""));
             }
         }
+
+        /*
+#if DEBUG
+        Console.WriteLine("Bruteforcing a few files..");
+        var brute = new ArchiveBruteforcer(this);
+        brute.Bruteforce();
+#endif
+        */
 
         Console.WriteLine("Archive loaded.");
         Console.WriteLine($"- Code Name: {Index.Codename}");
@@ -72,7 +77,12 @@ public class DataArchive : IDisposable
         return true;
     }
 
-    private void RegisterFileIfValid(string file)
+    public string GetDirectory()
+    {
+        return _dir;
+    }
+
+    public bool RegisterFileIfValid(string file)
     {
         file = file.ToLower().Replace('\\', '/');
         byte[] hashBytes = XxHash64.Hash(Encoding.ASCII.GetBytes(file), 0);
@@ -82,6 +92,7 @@ public class DataArchive : IDisposable
         if (fileIdx >= 0)
         {
             ExternalFilesHashTable.TryAdd(file, fileIdx);
+            return true;
         }
         else
         {
@@ -90,8 +101,11 @@ public class DataArchive : IDisposable
             {
                 ArchiveFilesHashTable.TryAdd(file, fileIdx);
                 HashToArchiveFile.TryAdd(hash, file);
+                return true;
             }
         }
+
+        return false;
     }
 
     // debug
@@ -146,10 +160,10 @@ public class DataArchive : IDisposable
     /// <param name="fileName"></param>
     /// <exception cref="ArgumentException"></exception>
     /// <exception cref="FileNotFoundException"></exception>
-    public void ExtractFile(string fileName)
+    public void ExtractFile(string fileName, string outputFolder)
     {
         ulong hash = HashPath(fileName);
-        ExtractFile(hash, fileName);
+        ExtractFile(hash, outputFolder, fileName);
     }
 
     /// <summary>
@@ -158,7 +172,7 @@ public class DataArchive : IDisposable
     /// <param name="hash"></param>
     /// <exception cref="ArgumentException"></exception>
     /// <exception cref="FileNotFoundException"></exception>
-    public void ExtractFile(ulong hash, string? fileName = null)
+    public void ExtractFile(ulong hash, string outputFolder, string? fileName = null)
     {
         int index = Index.ExternalFileHashes.BinarySearch(hash);
         if (index > 0)
@@ -171,12 +185,12 @@ public class DataArchive : IDisposable
         FileToChunkIndexer fileToChunkIndex = Index.FileToChunkIndexers[index];
 
         if (string.IsNullOrEmpty(fileName))
-            fileName = $"Unk_{index:X16}";
+            fileName = $"Unk_{hash:X16}";
 
-        ExtractInternal(fileToChunkIndex, fileName);
+        ExtractInternal(fileToChunkIndex, fileName, outputFolder);
     }
 
-    private void ExtractInternal(FileToChunkIndexer indexer, string outputFileName)
+    private void ExtractInternal(FileToChunkIndexer indexer, string outputFileName, string outputFolder)
     {
         if (indexer.ChunkEntryIndex == -1)
         {
@@ -219,7 +233,12 @@ public class DataArchive : IDisposable
             else
                 fileData = chunk.AsSpan((int)indexer.OffsetIntoDecompressedChunk, (int)indexer.FileSize);
 
-            string outputFile = Path.Combine(_dir, "data", outputFileName);
+            string outputFile;
+            if (outputFileName.StartsWith("Unk_"))
+                outputFile = Path.Combine(outputFolder, ".unmapped", outputFileName);
+            else
+                outputFile = Path.Combine(outputFolder, outputFileName);
+
             Directory.CreateDirectory(Path.GetDirectoryName(outputFile));
 
             using var writeStream = File.Create(outputFile);
@@ -274,6 +293,7 @@ public class DataArchive : IDisposable
                 Console.WriteLine($"- Index: Added {str} as new external file");
             else
                 Console.WriteLine($"- Index: Updated {str} external file");
+            RemoveArchiveFile(hash);
         }
 
         Console.WriteLine();
@@ -288,17 +308,26 @@ public class DataArchive : IDisposable
         {
             idx = Index.ExternalFileHashes.AddSorted(hash);
             added = true;
-
             Index.ExternalFileSizes.Insert(idx, fileSize);
         }
         else
         {
-            Index.ExternalFileHashes[idx] = fileSize;
+            Index.ExternalFileHashes[idx] = hash;
         }
 
         return added;
     }
-
+    
+    private void RemoveArchiveFile(ulong hash)
+    {
+        int idx = Index.ArchiveFileHashes.BinarySearch(hash);
+        if (idx > -1)
+        {
+            Index.ArchiveFileHashes.RemoveAt(idx);
+            Index.FileToChunkIndexers.RemoveAt(idx);
+        }
+    }
+    
     public void SaveIndex(string fileName)
     {
         byte[] outBuf = new byte[IndexFile.Serializer.GetMaxSize(Index)];

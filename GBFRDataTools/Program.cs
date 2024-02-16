@@ -8,7 +8,7 @@ namespace GBFRDataTools;
 
 internal class Program
 {
-    public const string Version = "0.2.0";
+    public const string Version = "1.0.1";
 
     static void Main(string[] args)
     {
@@ -32,12 +32,17 @@ internal class Program
 
     public static void Extract(ExtractVerbs verbs)
     {
-
         if (!File.Exists(verbs.InputPath))
         {
             Console.WriteLine($"ERROR: Index file '{verbs.InputPath}' does not exist.");
             return;
         }
+
+        string inputDir = Path.GetDirectoryName(Path.GetFullPath(verbs.InputPath));
+        if (string.IsNullOrEmpty(verbs.OutputPath))
+            verbs.OutputPath = Path.Combine(inputDir, "data");
+        else
+            verbs.OutputPath = Path.GetFullPath(verbs.OutputPath);
 
         using var archive = new DataArchive();
         try
@@ -45,7 +50,7 @@ internal class Program
             if (!archive.Init(verbs.InputPath))
                 return;
 
-            archive.ExtractFile(verbs.FileToExtract);
+            archive.ExtractFile(verbs.FileToExtract, verbs.OutputPath);
 
             Console.WriteLine("Done.");
         }
@@ -73,7 +78,12 @@ internal class Program
         if (checkFilter)
             verbs.Filter = verbs.Filter.Replace('\\', '/');
 
-        string dir = Path.GetDirectoryName(Path.GetFullPath(verbs.InputPath));
+        string inputDir = Path.GetDirectoryName(Path.GetFullPath(verbs.InputPath));
+
+        if (string.IsNullOrEmpty(verbs.OutputPath))
+            verbs.OutputPath = Path.Combine(inputDir, "data");
+        else
+            verbs.OutputPath = Path.GetFullPath(verbs.OutputPath);
 
         if (!verbs.ExtractUnknown)
         {
@@ -84,19 +94,22 @@ internal class Program
             {
                 try
                 {
+                    if (checkFilter && !f.Key.Contains(verbs.Filter))
+                    {
+                        i++;
+                        continue;
+                    }
+
                     Console.WriteLine($"[{i + 1}/{archive.ArchiveFilesHashTable.Count}] Extracting: {f.Key}");
                     i++;
 
-                    if (checkFilter && !f.Key.Contains(verbs.Filter))
-                        continue;
-
-                    if (!verbs.Overwrite && File.Exists(Path.Combine(dir, "data", f.Key)))
+                    if (!verbs.Overwrite && File.Exists(Path.Combine(verbs.OutputPath, f.Key)))
                     {
                         Console.WriteLine($"Skipping: {f.Key} - already extracted");
                         continue;
                     }
 
-                    archive.ExtractFile(f.Key);
+                    archive.ExtractFile(f.Key, verbs.OutputPath);
                 }
                 catch (Exception e)
                 {
@@ -108,7 +121,14 @@ internal class Program
         }
         else
         {
-            Console.WriteLine("Extracting unknown files is not yet supported.");
+            for (int i = 0;  i < archive.Index.ArchiveFileHashes.Count; i++)
+            {
+                if (archive.HashToArchiveFile.ContainsKey(archive.Index.ArchiveFileHashes[i]))
+                    continue;
+
+                Console.WriteLine($"Extracting unknown: {archive.Index.ArchiveFileHashes[i]:X16}");
+                archive.ExtractFile(archive.Index.ArchiveFileHashes[i], verbs.OutputPath);
+            }
         }
     }
 
@@ -287,17 +307,23 @@ public class ExtractVerbs
     [Option('i', "input", Required = true, HelpText = "Input data.i file.")]
     public string InputPath { get; set; }
 
+    [Option('o', "output", Required = false, HelpText = "Output directory for the file. Defaults to data folder next to data.i.")]
+    public string OutputPath { get; set; }
+
     [Option('f', "file", Required = true, HelpText = "File from the archive to extract.")]
     public string FileToExtract { get; set; }
 }
 
-[Verb("extract-all", HelpText = "Extract all files from a data.i archive.")]
+[Verb("extract-all", HelpText = "Extract files from a data.i archive.")]
 public class ExtractAllVerbs
 {
     [Option('i', "input", Required = true, HelpText = "Input data.i file.")]
     public string InputPath { get; set; }
 
-    [Option('u', "extract-unknown", Required = false, HelpText = "Whether to also extract unknown files (TODO).")]
+    [Option('o', "output", Required = false, HelpText = "Output directory for files. Defaults to data folder next to data.i.")]
+    public string OutputPath { get; set; }
+
+    [Option('u', "extract-unknown", Required = false, HelpText = "Whether to extract unknown files.")]
     public bool ExtractUnknown { get; set; }
 
     [Option('f', "filter", Required = false, HelpText = "Filter. Only paths starting with the specified filter will be extracted.")]
