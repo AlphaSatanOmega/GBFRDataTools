@@ -3,8 +3,13 @@ using GBFRDataTools.Archive;
 using GBFRDataTools.Configuration;
 using GBFRDataTools.Core.UI;
 using GBFRDataTools.Hashing;
+using GBFRDataTools.Database;
+using GBFRDataTools.Misc;
 
+using FlatSharp;
 using RestSharp;
+
+using System;
 
 using YamlDotNet.RepresentationModel;
 
@@ -12,7 +17,7 @@ namespace GBFRDataTools;
 
 internal class Program
 {
-    public const string Version = "1.0.2";
+    public const string Version = "1.2.2";
 
     static void Main(string[] args)
     {
@@ -43,7 +48,9 @@ internal class Program
             AddExternalFilesVerbs, 
             BruteforceStringVerbs,
             HashStringVerbs,
-            BConvertVerbs
+            BConvertVerbs,
+            SqliteToTblVerbs,
+            TblToSqliteVerbs
             >(args);
 
         p.WithParsed<ExtractVerbs>(Extract)
@@ -53,6 +60,8 @@ internal class Program
          .WithParsed<BruteforceStringVerbs>(BruteforceStr)
          .WithParsed<BConvertVerbs>(BConvert)
          .WithParsed<HashStringVerbs>(HashString)
+         .WithParsed<SqliteToTblVerbs>(SqliteToTbl)
+         .WithParsed<TblToSqliteVerbs>(TblToSqlite)
          .WithNotParsed(HandleNotParsedArgs);
     }
 
@@ -228,7 +237,7 @@ internal class Program
             Console.WriteLine(">= 6 length can take a very long while!");
 
         string ValidChars = "";
-        for (int i = 48; i <= 122; i++)
+        for (int i = 32; i <= 90; i++)
             ValidChars += (char)i;
 
         string match = Dive("", 0);
@@ -331,6 +340,56 @@ internal class Program
         {
             Console.WriteLine($"ERROR: {e.Message}");
         }
+    }
+
+    public static void TblToSqlite(TblToSqliteVerbs verbs)
+    {
+        if (!Directory.Exists(verbs.Input))
+        {
+            Console.WriteLine($"ERROR: Folder '{verbs.Input}' containing tables does not exist.");
+            return;
+        }
+
+        if (!System.Version.TryParse(verbs.Version, out Version version))
+        {
+            Console.WriteLine($"ERROR: Invalid version input string '{verbs.Version}'. Example: 1.0.0");
+            return;
+        }
+
+        var db = new GameDatabase();
+        db.Load(verbs.Input, version);
+
+        if (string.IsNullOrEmpty(verbs.Output))
+            verbs.Output = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(verbs.Input)), "db.sqlite");
+
+        Console.WriteLine($"Converting '{verbs.Input}' to sqlite..");
+        var exporter = new SQLiteExporter(db);
+        exporter.ExportTables(verbs.Output);
+
+        Console.WriteLine("Done.");
+    }
+
+    public static void SqliteToTbl(SqliteToTblVerbs verbs)
+    {
+        if (File.Exists(verbs.Output))
+        {
+            Console.WriteLine($"ERROR: Output '{verbs.Input}' is a file, not a directory.");
+            return;
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(verbs.Output)));
+
+        if (!System.Version.TryParse(verbs.Version, out Version version))
+        {
+            Console.WriteLine($"ERROR: Invalid version input string '{verbs.Version}'. Example: 1.0.0");
+            return;
+        }
+
+        var importer = new SQLiteImporter(verbs.Input);
+        GameDatabase gameDb = importer.Import(version);
+        gameDb.SaveTo(verbs.Output);
+
+        Console.WriteLine("Done.");
     }
 
     public static void HandleNotParsedArgs(IEnumerable<Error> errors)
@@ -517,4 +576,30 @@ public class BConvertVerbs
 
     [Option('o', "output", HelpText = "Output file.")]
     public string Output { get; set; }
+}
+
+[Verb("tbl-to-sqlite", HelpText = "Converts a folder containing .tbl files to a SQLite database.")]
+public class TblToSqliteVerbs
+{
+    [Option('i', "input", Required = true, HelpText = "Input folder containing .tbl files.")]
+    public string Input { get; set; }
+
+    [Option('o', "output", HelpText = "Output SQLite database file.")]
+    public string Output { get; set; }
+
+    [Option('v', "version", Required = true, HelpText = "Game version. Example: 1.0.5")]
+    public string Version { get; set; }
+}
+
+[Verb("sqlite-to-tbl", HelpText = "Converts a SQLite database to .tbl files.")]
+public class SqliteToTblVerbs
+{
+    [Option('i', "input", Required = true, HelpText = "Input SQLite database file.")]
+    public string Input { get; set; }
+
+    [Option('o', "output", HelpText = "Output folder for .tbl files.")]
+    public string Output { get; set; }
+
+    [Option('v', "version", Required = true, HelpText = "Game version. Example: 1.0.5")]
+    public string Version { get; set; }
 }
